@@ -10,15 +10,25 @@ import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.nfc.NdefMessage;
+import android.nfc.NdefRecord;
+import android.nfc.NfcAdapter;
+import android.nfc.Tag;
+import android.nfc.tech.Ndef;
+import android.os.AsyncTask;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.estimote.sdk.Beacon;
 import com.estimote.sdk.BeaconManager;
 import com.estimote.sdk.Region;
 
+import java.io.UnsupportedEncodingException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -35,6 +45,12 @@ public class MainActivity extends AppCompatActivity {
     // Coordenadas de la plaza roja
     private Double x1 = -89.644263;
     private Double y1 = 21.048234;
+
+    public static final String TAG = "NfcDemo";
+
+    private TextView textViewLong;
+    private TextView textViewLat;
+    private NfcAdapter mNfcAdapter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -79,11 +95,6 @@ public class MainActivity extends AppCompatActivity {
         beaconManager.setMonitoringListener(new BeaconManager.MonitoringListener() {
             @Override
             public void onEnteredRegion(Region region, List<Beacon> list) {
-                try {
-                    Thread.sleep(5000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
                 if (gpsInRange) {
                     if (!beaconInRange) {
                         showBeaconNotification(
@@ -93,8 +104,8 @@ public class MainActivity extends AppCompatActivity {
                     }
                 } else {
                     showBeaconNotification(
-                            "Dentro de beacon, Fuera de GPS",
-                            "Lleva tu móvil a la Facultad de Matemáticas.");
+                            "Dentro de GPS, Fuera de BEACON",
+                            "Lleva tu móvil al BEACON.");
                 }
             }
 
@@ -114,6 +125,56 @@ public class MainActivity extends AppCompatActivity {
                         63463, 21120));
             }
         });
+
+
+        textViewLat = ((TextView) findViewById(R.id.textViewLat));
+        textViewLong = ((TextView) findViewById(R.id.textViewLong));
+
+
+        mNfcAdapter = NfcAdapter.getDefaultAdapter(this);
+
+        if (mNfcAdapter == null) {
+            // Stop here, we definitely need NFC
+            Toast.makeText(this, "This device doesn't support NFC.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (!mNfcAdapter.isEnabled()) {
+            textViewLong.setText("NFC is disabled.");
+        } else {
+            textViewLong.setText("NFC is enabled.");
+        }
+
+        handleIntent(getIntent());
+    }
+
+
+    private void handleIntent(Intent intent) {
+        String action = intent.getAction();
+        if (NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)) {
+
+            String type = intent.getType();
+            if ("text/plain".equals(type)) {
+
+                Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
+                new NdefReaderTask().execute(tag);
+            } else {
+                Log.d(TAG, "Wrong mime type: " + type);
+            }
+        } else if (NfcAdapter.ACTION_TECH_DISCOVERED.equals(action)) {
+
+            // In case we would still use the Tech Discovered Intent
+            Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
+            String[] techList = tag.getTechList();
+            String searchedTech = Ndef.class.getName();
+
+            for (String tech : techList) {
+                if (searchedTech.equals(tech)) {
+                    new NdefReaderTask().execute(tag);
+                    break;
+                }
+            }
+        }
     }
 
     public void showBeaconNotification(String title, String message) {
@@ -138,4 +199,63 @@ public class MainActivity extends AppCompatActivity {
         return Math.abs(x1 - location.getLongitude()) <= .000232 &&
                 Math.abs(y1 - location.getLatitude()) <= .00058;
     }
+
+    private class NdefReaderTask extends AsyncTask<Tag, Void, String> {
+
+        @Override
+        protected String doInBackground(Tag... params) {
+            Tag tag = params[0];
+
+            Ndef ndef = Ndef.get(tag);
+            if (ndef == null) {
+                // NDEF is not supported by this Tag.
+                Toast.makeText(getApplicationContext(), "NDEF No soportado", Toast.LENGTH_LONG).show();
+                return null;
+            }
+
+            NdefMessage ndefMessage = ndef.getCachedNdefMessage();
+
+            NdefRecord[] records = ndefMessage.getRecords();
+            for (NdefRecord ndefRecord : records) {
+                if (ndefRecord.getTnf() == NdefRecord.TNF_WELL_KNOWN && Arrays.equals(ndefRecord.getType(), NdefRecord.RTD_TEXT)) {
+                    try {
+                        return readText(ndefRecord);
+                    } catch (UnsupportedEncodingException e) {
+                        Toast.makeText(getApplicationContext(), "Unsupported Encoding", Toast.LENGTH_LONG).show();
+                        Log.e(TAG, "Unsupported Encoding", e);
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private String readText(NdefRecord record) throws UnsupportedEncodingException {
+            byte[] payload = record.getPayload();
+
+            // Get the Text Encoding
+            String textEncoding = ((payload[0] & 128) == 0) ? "UTF-8" : "UTF-16";
+
+            // Get the Language Code
+            int languageCodeLength = payload[0] & 0063;
+
+            // String languageCode = new String(payload, 1, languageCodeLength, "US-ASCII");
+            // e.g. "en"
+
+            // Get the Text
+            return new String(payload, languageCodeLength + 1, payload.length - languageCodeLength - 1, textEncoding);
+        }
+
+        @Override
+        protected void onPostExecute(String result) {
+            if (result != null && gpsInRange && beaconInRange) {
+                FetchDataTask fetchDataTask = new FetchDataTask(textViewLong);
+                fetchDataTask.execute("Start");
+
+                Toast.makeText(getApplicationContext(), "NFC LEIDO", Toast.LENGTH_LONG).show();
+//                textViewLong.setText("Read content: " + result);
+            }
+        }
+    }
 }
+
