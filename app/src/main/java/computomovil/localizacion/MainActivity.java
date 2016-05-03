@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
@@ -36,8 +37,7 @@ public class MainActivity extends AppCompatActivity {
 
     private LocationManager locationManager;
     private BeaconManager beaconManager;
-    private boolean beaconInRange = false;
-    private boolean gpsInRange = false;
+
 
     public static final double DISTANCE = 50.0;
     private Location center = new Location("");
@@ -67,12 +67,15 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onLocationChanged(Location location) {
                 double distance = center.distanceTo(location);
+                SharedPreferences.Editor editor = getSharedPreferences("localizacion", MODE_PRIVATE).edit();
                 if (distance <= DISTANCE) {
-                    ((TextView) findViewById(R.id.textViewLong)).setText("Dentro");
+                    textViewLat.setText("Dentro GPS");
+                    editor.putBoolean("gpsInRange", true);
                 } else {
-                    ((TextView) findViewById(R.id.textViewLong)).setText(location.getLongitude() + " ~ " + location.getLatitude());
+                    textViewLat.setText("Fuera GPS");
+                    editor.putBoolean("gpsInRange", false);
                 }
-                gpsInRange = isInRange(location);
+                editor.apply();
             }
 
             @Override
@@ -95,12 +98,17 @@ public class MainActivity extends AppCompatActivity {
         beaconManager.setMonitoringListener(new BeaconManager.MonitoringListener() {
             @Override
             public void onEnteredRegion(Region region, List<Beacon> list) {
+                boolean gpsInRange = getSharedPreferences("localizacion", MODE_PRIVATE).getBoolean("gpsInRange", false);
+                boolean beaconInRange = getSharedPreferences("localizacion", MODE_PRIVATE).getBoolean("beaconInRange", false);
                 if (gpsInRange) {
                     if (!beaconInRange) {
+                        textViewLong.setText("Dentro BEACON");
                         showBeaconNotification(
                                 "BIENVENIDO AL CC1",
                                 "Listo para descargar la información de la asignatura?");
-                        beaconInRange = true;
+                        SharedPreferences.Editor editor = getSharedPreferences("localizacion", MODE_PRIVATE).edit();
+                        editor.putBoolean("beaconInRange", true);
+                        editor.apply();
                     }
                 } else {
                     showBeaconNotification(
@@ -112,7 +120,11 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onExitedRegion(Region region) {
                 showBeaconNotification("SALIDA", "Nos vemos pronto");
-                beaconInRange = false;
+                SharedPreferences.Editor editor = getSharedPreferences("localizacion", MODE_PRIVATE).edit();
+                editor.putBoolean("beaconInRange", false);
+                editor.apply();
+                textViewLong.setText("Fuera BEACON");
+
             }
         });
 
@@ -140,9 +152,9 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (!mNfcAdapter.isEnabled()) {
-            textViewLong.setText("NFC is disabled.");
+//            textViewLong.setText("NFC is disabled.");
         } else {
-            textViewLong.setText("NFC is enabled.");
+//            textViewLong.setText("NFC is enabled.");
         }
 
         handleIntent(getIntent());
@@ -195,11 +207,6 @@ public class MainActivity extends AppCompatActivity {
         notificationManager.notify(1, notification);
     }
 
-    private boolean isInRange(Location location) {
-        return Math.abs(x1 - location.getLongitude()) <= .000232 &&
-                Math.abs(y1 - location.getLatitude()) <= .00058;
-    }
-
     private class NdefReaderTask extends AsyncTask<Tag, Void, String> {
 
         @Override
@@ -248,6 +255,8 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         protected void onPostExecute(String result) {
+            boolean gpsInRange = getSharedPreferences("localizacion", MODE_PRIVATE).getBoolean("gpsInRange", false);
+            boolean beaconInRange = getSharedPreferences("localizacion", MODE_PRIVATE).getBoolean("beaconInRange", false);
             if (result != null && gpsInRange && beaconInRange) {
                 FetchDataTask fetchDataTask = new FetchDataTask(textViewLong);
                 fetchDataTask.execute("Start");
